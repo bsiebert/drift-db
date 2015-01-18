@@ -4,6 +4,7 @@
             [clojure.string :as clojure-str]
             [drift-db.column.column :as column-protocol]
             [drift-db.column.belongs-to :as belongs-to-column]
+            [drift-db.column.byte-array :as byte-array-column]
             [drift-db.column.date :as date-column]
             [drift-db.column.date-time :as date-time-column]
             [drift-db.column.decimal :as decimal-column]
@@ -16,6 +17,7 @@
             [drift-db.spec :as spec-protocol])
   (:import [drift_db.column.belongs_to BelongsToColumn]
            [drift_db.column.boolean BooleanColumn]
+           [drift_db.column.byte_array ByteArrayColumn]
            [drift_db.column.date DateColumn]
            [drift_db.column.date_time DateTimeColumn]
            [drift_db.column.decimal DecimalColumn]
@@ -25,37 +27,56 @@
            [drift_db.column.text TextColumn]
            [drift_db.column.time TimeColumn]))
 
-(defn
-#^{:doc "Returns the given string surrounded by double quotes."}
-  identifier-quote [s]
-  (str "\"" s "\""))
+(defn identifier-quote
+"Returns the given string surrounded by double quotes."
+[symbol-name]
+  (when symbol-name
+    (str "\"" symbol-name "\"")))
 
-(defn
-#^{:doc "Returns the given key or string as valid column name. Basically turns 
-any keyword into a string, and replaces dashes with underscores."}
-  column-name [column]
+(defn db-symbol
+  "Converts the given symbol-name which can be a string or keyword, and converts it to a proper database symbol."
+  [symbol-name]
+  (when symbol-name
+    (identifier-quote (conjure-loading-utils/dashes-to-underscores (name symbol-name)))))
+
+(defn column-name
+"Returns the given key or string as valid column name. Basically turns 
+any keyword into a string, and replaces dashes with underscores."
+[column]
   (if (satisfies? column-protocol/Column column)
     (column-name (column-protocol/name column))
-    (identifier-quote (conjure-loading-utils/dashes-to-underscores (name column)))))
+    (db-symbol column)))
 
-(defn
-#^{ :doc "Returns the given valid column name as a keyword. Basically turns 
-any string into a keyword, and replaces underscores with dashes." }
-  column-name-key [column-name]
+(defn column-name-key
+"Returns the given valid column name as a keyword. Basically turns 
+any string into a keyword, and replaces underscores with dashes."
+[column-name]
   (when column-name
-    (keyword (conjure-loading-utils/underscores-to-dashes (.toLowerCase (name column-name))))))
+    (keyword (conjure-loading-utils/underscores-to-dashes (name column-name)))))
 
-(defn
-#^{:doc "Returns the not null spec vector from the given mods map."}
-  not-null-mod [column-spec]
-  (if (or (column-protocol/nullable? column-spec) (column-protocol/auto-increment? column-spec))
+(defn nullable?
+  "Returns true if the given columns spec is nullable which means not-null is false or not set or auto-increment is
+   true."
+  [column-spec]
+  (or (column-protocol/nullable? column-spec) (column-protocol/auto-increment? column-spec)))
+
+(defn not-null-mod
+"Returns the not null spec vector from the given mods map."
+[column-spec]
+  (if (nullable? column-spec)
     []
     ["NOT NULL"]))
 
-(defn
-#^{:doc "Returns the primary key spec vector from the given mods map."}
-  primary-key-mod [column-spec]
-  (if (and (column-protocol/primary-key? column-spec) (not (column-protocol/auto-increment? column-spec)))
+(defn primary-key?
+  "Returns true if the given column-spec should be a primary key which means primary-key is true and auto-increment is
+   false."
+  [column-spec]
+  (and (column-protocol/primary-key? column-spec) (not (column-protocol/auto-increment? column-spec))))
+
+(defn primary-key-mod
+"Returns the primary key spec vector from the given mods map."
+[column-spec]
+  (if (primary-key? column-spec)
     ["PRIMARY KEY"]
     []))
 
@@ -81,6 +102,10 @@ any string into a keyword, and replaces underscores with dashes." }
   BooleanColumn
     (db-type [column-spec]
       "BOOLEAN")
+
+  ByteArrayColumn
+    (db-type [column-spec]
+      "BYTEA")
 
   DateColumn
     (db-type [column-spec]
@@ -129,6 +154,7 @@ any string into a keyword, and replaces underscores with dashes." }
   (clojure-str/join " " (spec-vec spec)))
 
 (def boolean-regex #"boolean")
+(def byte-array-regex #"bytea")
 (def date-regex #"date")
 (def date-time-regex #"timestamp without time zone")
 (def integer-regex #"smallint|integer|bigint")
@@ -139,6 +165,9 @@ any string into a keyword, and replaces underscores with dashes." }
 
 (defn is-boolean-column [column-type]
   (re-matches boolean-regex column-type))
+
+(defn is-byte-array-column [column-type]
+  (re-matches byte-array-regex column-type))
 
 (defn is-date-column [column-type]
   (re-matches date-regex column-type))
@@ -165,6 +194,7 @@ any string into a keyword, and replaces underscores with dashes." }
   (when column-type
     (cond
       (is-boolean-column column-type) :boolean
+      (is-byte-array-column column-type) :byte-array
       (is-date-column column-type) :date
       (is-date-time-column column-type) :date-time
       (is-integer-column column-type) :integer
@@ -172,7 +202,7 @@ any string into a keyword, and replaces underscores with dashes." }
       (is-string-column column-type) :string
       (is-text-column column-type) :text
       (is-time-column column-type) :time
-      :else (throw (RuntimeException. (str "Unknown column type: " column-type))))))
+      :else (throw (RuntimeException. (str "Unknown column type: \"" column-type "\""))))))
 
 (defn parse-length-with-regex
   ([column-type regex] (parse-length-with-regex column-type regex 1))
@@ -237,6 +267,12 @@ any string into a keyword, and replaces underscores with dashes." }
 
 (defmulti create-column  (fn [column-map] (get column-map :type)))
 
+(defmethod create-column :boolean [column-map]
+  (drift-db/boolean (get column-map :name)))
+
+(defmethod create-column :byte-array [column-map]
+  (drift-db/byte-array (get column-map :name)))
+
 (defmethod create-column :date [column-map]
   (drift-db/date (get column-map :name)))
 
@@ -257,9 +293,6 @@ any string into a keyword, and replaces underscores with dashes." }
 
 (defmethod create-column :time [column-map]
   (drift-db/time-type (get column-map :name)))
-
-(defmethod create-column :boolean [column-map]
-  (drift-db/boolean (get column-map :name)))
 
 (defmethod create-column :default [column-map]
   (throw (RuntimeException. (str "Cannot create a column for: " column-map))))

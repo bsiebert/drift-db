@@ -1,7 +1,8 @@
 (ns drift-db-postgresql.test.flavor
   (:use drift-db-postgresql.flavor
         clojure.test)
-  (:require [drift-db.core :as drift-db]
+  (:require [clojure.tools.logging :as logging]
+            [drift-db.core :as drift-db]
             [drift-db-postgresql.test.column :as column-test]))
 
 (def dbname "drift_db_test")
@@ -26,6 +27,7 @@
     (try
       (is flavor)
       (drift-db/init-flavor flavor)
+      (drift-db/drop-table-if-exists :test)
       (drift-db/create-table :test
         (drift-db/integer :id { :auto-increment true :primary-key true })
         (drift-db/string :name { :length 20 :not-null true })
@@ -48,7 +50,9 @@
         (is (= (get table-description :name) :test))
         (is (doall (get table-description :columns)))
         (is (= (count (get table-description :columns)) (count expected-columns)))
-        (doseq [column-pair (map #(list %1 %2) (get table-description :columns) (reverse expected-columns))]
+        (doseq [column-pair (map #(list %1 %2)
+                                 (get table-description :columns)
+                                 expected-columns)]
           (column-test/assert-column-map (first column-pair) (second column-pair))))
       (is (drift-db/column-exists? :test :id))
       (is (drift-db/column-exists? :test "bar"))
@@ -63,13 +67,13 @@
         :added (drift-db/string :altered-test))
       (column-test/assert-column-map 
         (drift-db/find-column :test :altered-test)
-        { :length 255, :name :altered-test, :type :string })
+        { :type :string, :name :altered-test, :length 255 })
 
       (drift-db/update-column :test
-        :altered-test (drift-db/string :altered { :length 100 }))
+        :altered-test (drift-db/string :altered { :length 100 :not-null true }))
       (column-test/assert-column-map
         (drift-db/find-column (drift-db/describe-table :test) :altered)
-        { :length 100, :name :altered, :type :string })
+        { :type :string, :name :altered, :length 100, :not-null true })
 
       (drift-db/drop-column :test :altered)
       (is (not (drift-db/column-exists? :test :altered)))
@@ -77,31 +81,56 @@
       (drift-db/drop-column-if-exists :test :bar)
       (is (not (drift-db/column-exists? :test :bar)))
 
+      (drift-db/create-index :test :name-index { :columns [:name] 
+                                                 :unique? true
+                                                 :method :btree
+                                                 :direction :descending
+                                                 :nulls :last })
+      (drift-db/drop-index :test :name-index)
+
       (finally 
         (drift-db/drop-table-if-exists :test)
         (is (not (drift-db/table-exists? :test)))))))
 
 (deftest test-rows
-  (let [flavor (postgresql-flavor username password dbname)]
+  (let [table-name :test-test
+        column-name :name-test
+        column-name2 :name-test2
+        column-name-str "name_test"
+        column-name2-str "name_test2"
+        flavor (postgresql-flavor username password dbname)]
     (try
       (is flavor)
       (drift-db/init-flavor flavor)
-      (drift-db/create-table :test
-        (drift-db/string :name { :length 20 :not-null true :primary-key true }))
-      (is (drift-db/table-exists? :test))
+      (drift-db/drop-table table-name)
+      (drift-db/create-table table-name
+        (drift-db/string column-name { :length 20 :not-null true :primary-key true })
+        (drift-db/string column-name2 { :length 20 }))
+      (is (drift-db/table-exists? table-name))
+      (is (drift-db/column-exists? table-name column-name))
       (let [test-row-name "blah"
             test-row-name2 "blah2"
-            test-row { :name test-row-name }
-            test-row2 { :name test-row-name2 }]
-        (drift-db/insert-into :test test-row)
-        (is (= (first (drift-db/sql-find { :table :test :where [(str "NAME = '" test-row-name "'")] :limit 1 :order-by :name }))
+            test-row { column-name test-row-name column-name2 nil }
+            test-row2 { column-name test-row-name2 column-name2 "" }]
+        (drift-db/insert-into table-name test-row nil)
+        (is (= (first (drift-db/sql-find { :table table-name :where [(str column-name-str " = '" test-row-name "'")] :limit 1
+                                           :order-by column-name }))
                test-row))
-        (drift-db/update :test ["NAME = ?" test-row-name] { :name test-row-name2 })
-        (is (= (first (drift-db/sql-find { :table :test :where ["NAME = ?" test-row-name2] })) test-row2))
-        (drift-db/update :test { :name test-row-name2 } { :name test-row-name })
-        (is (= (first (drift-db/sql-find { :table :test :where ["NAME = ?" test-row-name] })) test-row))
-        (drift-db/delete :test ["NAME = ?" test-row-name])
-        (is (nil? (first (drift-db/sql-find { :table :test :where { :name test-row-name } })))))
+        (drift-db/update table-name [(str column-name-str " = ?") test-row-name]
+                         { column-name test-row-name2 column-name2 "" })
+        (is (= (first (drift-db/sql-find { :table table-name :where [(str column-name-str " = ?") test-row-name2] }))
+               test-row2))
+        (drift-db/update table-name { column-name test-row-name2 } { column-name test-row-name column-name2 nil })
+        (is (= (first (drift-db/sql-find { :table table-name :where [(str column-name-str " = ?") test-row-name] }))
+               test-row))
+
+        (is (= (first (drift-db/sql-find { :table table-name :where [(str column-name2-str " IS NULL")] :limit 1
+                                           :order-by column-name }))
+               test-row))
+
+        (drift-db/delete table-name [(str column-name-str " = ?") test-row-name])
+        (is (nil? (first (drift-db/sql-find { :table table-name :where { column-name test-row-name } })))))
+
       (finally 
-        (drift-db/drop-table :test)
-        (is (not (drift-db/table-exists? :test)))))))
+        (drift-db/drop-table table-name)
+        (is (not (drift-db/table-exists? table-name)))))))

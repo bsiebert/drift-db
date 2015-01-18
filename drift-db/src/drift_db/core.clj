@@ -1,9 +1,11 @@
 (ns drift-db.core
+  (:refer-clojure :exclude [boolean byte-array])
   (:require [clojure.tools.logging :as logging]
             [clojure.tools.loading-utils :as loading-utils]
             [clojure.tools.string-utils :as string-utils]
             [drift-db.column.belongs-to :as belongs-to-column]
             [drift-db.column.boolean :as boolean-column]
+            [drift-db.column.byte-array :as byte-array]
             [drift-db.column.column :as column-protocol]
             [drift-db.column.date :as date-column]
             [drift-db.column.date-time :as date-time-column]
@@ -144,13 +146,13 @@
 (defn column-name
   "Given a column name or column spec, this function returns the column name."
   [column]
-  (keyword
-    (cond
-      (map? column) (get column :name)
-      (keyword? column) (name column)
-      (string? column) column
-      (satisfies? column-protocol/Column column) (column-protocol/name column)
-      :else (throw (RuntimeException. (str "Don't know how to get the name for a column of type: " (type column)))))))
+  (cond
+    (map? column) (flavor-protocol/table-column-name @drift-db-flavor (get column :name))
+    (keyword? column) (flavor-protocol/table-column-name @drift-db-flavor column)
+    (string? column) (flavor-protocol/table-column-name @drift-db-flavor column)
+    (satisfies? column-protocol/Column column) (flavor-protocol/table-column-name @drift-db-flavor
+                                                                                  (column-protocol/name column))
+    :else (throw (RuntimeException. (str "Don't know how to get the name for a column of type: " (type column))))))
 
 (defn column-name=
   "Returns true if both of the given columns specs or names have equal column names."
@@ -286,6 +288,15 @@
   ([column mods]
     (boolean-column/create-column column)))
 
+(defn byte-array
+  "Returns a new spec describing a byte array with the given column and spec mods map. Use this method with the
+   create-table method.
+
+   Curently supported values for mods: None"
+  ([column] (byte-array column {}))
+  ([column mods]
+    (byte-array/create-column column)))
+
 (defn format-date
   "Returns the string value of the given date for use in the database."
   [date]
@@ -325,3 +336,19 @@
   [table where-or-record record]
   (flavor-protocol/update @drift-db-flavor table where-or-record record))
 
+(defn create-index
+  "Creates an index on the given table using the given columns specified with the given spec. Supported keys in
+     mods is:
+
+       columns - The columns to use in the index.
+       unique? - If true, then the index should be unique. Optional
+       method - The name of the method to use. Optional, uses the database's default if missing. Supported values: btree, hash
+       direction - The direction of the index order. Either ascending or descending. Optional.
+       nulls - Where the nulls should be in the index order. Either first or last. Optional."
+  [table index-name mods]
+  (flavor-protocol/create-index @drift-db-flavor table index-name mods))
+
+(defn drop-index
+  "Drops the given index."
+  [table index-name]
+  (flavor-protocol/drop-index @drift-db-flavor table index-name))

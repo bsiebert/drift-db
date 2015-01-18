@@ -9,6 +9,12 @@
 
 (def db-dir "test/db/data/")
 
+(def username "test")
+
+(def password "password")
+
+(def file-password "file-password")
+
 (deftest test-order-clause
   (is (= (order-clause { :order-by :test}) " ORDER BY test"))
   (is (= (order-clause { :order-by { :expression :test }}) " ORDER BY test"))
@@ -25,7 +31,11 @@
   (column-test/assert-column-map column-spec column-map))
 
 (deftest create-flavor
-  (let [flavor (h2-flavor dbname db-dir)]
+  (is (h2-flavor dbname))
+  (is (h2-flavor dbname db-dir))
+  (is (h2-flavor dbname db-dir username password))
+  (is (h2-flavor dbname db-dir username password true))
+  (let [flavor (h2-flavor dbname db-dir username password true file-password)]
     (try
       (is flavor)
       (drift-db/init-flavor flavor)
@@ -48,7 +58,7 @@
                               { :name :description, :type :text }
                               { :name :deleted-at, :type :time }
                               { :name :foo :type :boolean }]]
-        (is (= (get table-description :name) :test))
+        (is (= (get table-description :name) "test"))
         (is (get table-description :columns))
         (is (= (count (get table-description :columns)) (count expected-columns)))
         (doseq [column-pair (map #(list %1 %2) (get table-description :columns) expected-columns)]
@@ -59,14 +69,17 @@
         (drift-db/string :added))
       (assert-column (drift-db/find-column (drift-db/describe-table :test) :added)
             { :length 255, :name :added, :type :string })
+
       (drift-db/update-column :test
         :added (drift-db/string :altered-test))
       (assert-column (drift-db/find-column :test :altered-test)
             { :length 255, :name :altered-test, :type :string })
+
       (drift-db/update-column :test
-        :altered-test (drift-db/string :altered { :length 100 }))
+        :altered-test (drift-db/string :altered { :length 100 :not-null true  }))
       (assert-column (drift-db/find-column (drift-db/describe-table :test) :altered)
-            { :length 100, :name :altered, :type :string })
+            { :type :string, :name :altered, :length 100, :not-null true })
+
       (drift-db/drop-column :test :altered)
       (is (not (drift-db/column-exists? :test :altered)))
 
@@ -74,23 +87,27 @@
       (drift-db/drop-column-if-exists :test :bar)
       (is (not (drift-db/column-exists? :test :bar)))
 
+      (drift-db/create-index :test :name-index { :columns [:name] :unique? true })
+      (drift-db/drop-index :test :name-index)
+
       (finally 
         (drift-db/drop-table-if-exists :test)
         (is (not (drift-db/table-exists? :test)))))))
 
 (deftest test-rows
-  (let [flavor (h2-flavor dbname db-dir)]
+  (let [flavor (h2-flavor dbname db-dir username password true file-password)]
     (try
       (is flavor)
       (drift-db/init-flavor flavor)
       (drift-db/create-table :test
         (drift-db/string :name { :length 20 :not-null true :primary-key true }))
       (is (drift-db/table-exists? :test))
+      (is (drift-db/column-exists? :test :name))
       (let [test-row-name "blah"
             test-row-name2 "blah2"
             test-row { :name test-row-name }
             test-row2 { :name test-row-name2 }]
-        (drift-db/insert-into :test test-row)
+        (drift-db/insert-into :test test-row nil)
         (is (= (first (drift-db/sql-find { :table :test :where [(str "NAME = '" test-row-name "'")] :limit 1 :order-by :name })) 
                test-row))
         (drift-db/update :test ["NAME = ?" test-row-name] { :name test-row-name2 })

@@ -25,38 +25,44 @@
            [drift_db.column.text TextColumn]
            [drift_db.column.time TimeColumn]))
 
-(defn
-#^{:doc "Returns the given key or string as valid column name. Basically turns 
-any keyword into a string, and replaces dashes with underscores."}
-  column-name [column]
+(defn db-symbol
+  "Converts the given symbol-name which can be a string or keyword, and converts it to a proper database symbol."
+  [symbol-name]
+  (when symbol-name
+    (conjure-loading-utils/dashes-to-underscores (name symbol-name))))
+
+(defn column-name
+  "Returns the given key or string as valid column name. Basically turns 
+any keyword into a string, and replaces dashes with underscores."
+  [column]
   (if (satisfies? column-protocol/Column column)
     (column-name (column-protocol/name column))
-    (conjure-loading-utils/dashes-to-underscores (name column))))
+    (db-symbol column)))
 
-(defn
-#^{ :doc "Returns the given valid column name as a keyword. Basically turns 
-any string into a keyword, and replaces underscores with dashes." }
-  column-name-key [column-name]
+(defn column-name-key
+  "Returns the given valid column name as a keyword. Basically turns 
+any string into a keyword, and replaces underscores with dashes."
+  [column-name]
   (when column-name
     (keyword (conjure-loading-utils/underscores-to-dashes (.toLowerCase (name column-name))))))
 
-(defn
-#^{:doc "Returns the primary key spec vector from the given mods map."}
-  auto-increment-mod [column-spec]
-  (if (column-protocol/auto-increment? column-spec)
+(defn auto-increment-mod
+  "Returns the primary key spec vector from the given mods map."
+  [column-spec]
+  (if (and (not (instance? IdentifierColumn column-spec)) (column-protocol/auto-increment? column-spec))
     ["AUTO_INCREMENT"]
     []))
 
-(defn
-#^{:doc "Returns the not null spec vector from the given mods map."}
-  not-null-mod [column-spec]
+(defn not-null-mod
+  "Returns the not null spec vector from the given mods map."
+  [column-spec]
   (if (column-protocol/nullable? column-spec)
     []
     ["NOT NULL"]))
 
-(defn
-#^{:doc "Returns the primary key spec vector from the given mods map."}
-  primary-key-mod [column-spec]
+(defn primary-key-mod
+  "Returns the primary key spec vector from the given mods map."
+  [column-spec]
   (if (column-protocol/primary-key? column-spec)
     ["PRIMARY KEY"]
     []))
@@ -97,7 +103,7 @@ any string into a keyword, and replaces underscores with dashes." }
 
   IdentifierColumn
     (db-type [column-spec]
-      (integer-db-type column-spec))
+      "IDENTITY")
 
   DecimalColumn
     (db-type [column-spec]
